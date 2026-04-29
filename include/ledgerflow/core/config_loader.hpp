@@ -1,8 +1,0 @@
-//
-// Created by jtwears on 4/12/26.
-//
-
-#ifndef LEDGERFLOW_CONFIG_LOADER_H
-#define LEDGERFLOW_CONFIG_LOADER_H
-
-#endif //LEDGERFLOW_CONFIG_LOADER_H

@@ -13,6 +13,8 @@ add_executable(ledgerflow_unit_tests
     wal_append_test.cpp
     wal_commit_test.cpp
     wal_recover_test.cpp
+    wal_io_test.cpp
+        ../../include/ledgerflow/protocol.hpp
 )
 
 target_link_libraries(ledgerflow_unit_tests

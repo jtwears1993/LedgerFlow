@@ -2,9 +2,11 @@
 
 ## Purpose
 
-Measure the performance characteristics of `ledgerflow::wal::WriteAheadLog` across
-four dimensions: lifecycle cost, in-memory append throughput, batch append throughput,
-and flush/fsync cost on destruction.
+Measure the performance characteristics of `ledgerflow::wal::WriteAheadLog` across all
+cost centres: encoding, ring-buffer, write syscall, fsync/fdatasync, group commit,
+recovery, sequential read, and CRC.
+
+---
 
 ## Build Instructions
 
@@ -16,84 +18,292 @@ cmake -S . -B build_test \
 cmake --build build_test --parallel
 ```
 
+---
+
 ## Run Instructions
 
 ```bash
 # All benchmarks
 ./build_test/test/benchmark/ledgerflow_benchmarks
 
-# Specific benchmark
-./build_test/test/benchmark/ledgerflow_benchmarks --benchmark_filter=BM_DestructFlush
+# Single category (e.g. fsync)
+./build_test/test/benchmark/ledgerflow_benchmarks --benchmark_filter=BM_Fsync
 
-# JSON output
+# JSON output for tooling
 ./build_test/test/benchmark/ledgerflow_benchmarks --benchmark_format=json
 ```
 
+---
+
+## Environment Recommendations
+
+For meaningful IO numbers:
+
+```bash
+# Set CPU governor to performance
+sudo cpupower frequency-set -g performance
+
+# Pin to one core
+taskset -c 0 ./build_test/test/benchmark/ledgerflow_benchmarks
+
+# Reduce system load before running
+```
+
+Record filesystem type, mount options, and storage device in results.
+IO benchmarks use `UseRealTime()`; CPU-only benchmarks (encode, append-to-memory) do not.
+
+---
+
+## Hardware Counter Profiling
+
+```bash
+perf stat -e cycles,instructions,cache-references,cache-misses,branches,branch-misses \
+    ./build_test/test/benchmark/ledgerflow_benchmarks
+```
+
+---
+
+## Transaction Shape
+
+A **fill transaction** used in transaction benchmarks:
+
+| Record | Payload type | Payload bytes | WAL bytes (header+payload) |
+|--------|-------------|---------------|---------------------------|
+| TxnHeaderRecord | fixed | 24 | 48 |
+| TxnLineRecord ×4 | fixed | 24 | 48 each |
+| CommitRecord | fixed | 16 | 40 |
+| **Total** | | **104** | **280** |
+
+---
+
 ## Benchmark List
 
-| Benchmark | What it measures |
+### Section 1 — Lifecycle
+| Benchmark | Measures |
 |---|---|
-| `BM_ConstructDestroy` | `open()` + `close()` + `fsync()` with empty buffer |
-| `BM_AppendSingle` | Ring-buffer push + sequencer increment (pure memory, no I/O) |
-| `BM_AppendMany/N` | Throughput for N appends per work unit |
-| `BM_DestructFlush/N` | `write()` + `fsync()` + `close()` for N buffered records |
+| `BM_Lifecycle_ConstructDestroy` | `open()` + empty destructor flush (fsync + close) |
 
-## Metrics Tracked
+### Section 2 — Record Encoding (CPU only, no IO)
+| Benchmark | Measures |
+|---|---|
+| `BM_Encode_TxnHeader` | Header population + vector copy for TxnHeaderRecord |
+| `BM_Encode_TxnLine` | Same for TxnLineRecord |
+| `BM_Encode_CommitRecord` | Same for CommitRecord |
+| `BM_Encode_FillTransaction` | All 6 records for one fill transaction |
 
-- **Time/iteration** (ns or µs): end-to-end latency for the measured operation
-- **CPU time**: CPU-only time, excluding OS scheduling and I/O wait
-- **items/second**: record throughput
-- **bytes/second**: raw byte throughput (where applicable)
+### Section 3 — Append to Memory Buffer (CPU only)
+| Benchmark | Measures |
+|---|---|
+| `BM_Append_Single` | Ring-buffer push + sequencer increment (hot path) |
+| `BM_Append_Many/N` | N appends; WAL destroyed outside timed section |
+
+### Section 4 — Write Without fsync (page-cache write cost)
+| Benchmark | Measures |
+|---|---|
+| `BM_Write_SingleRecord_NoFsync` | One `writeNextWalRecord()` call (2 write syscalls) |
+| `BM_Write_BatchRecords_NoFsync/N` | N writes to fresh file, no fsync |
+| `BM_Write_Writev_SingleRecord_NoFsync` | One `writev()` (single syscall, header + payload) |
+
+### Section 5 — fsync / fdatasync Isolated Cost
+| Benchmark | Measures |
+|---|---|
+| `BM_Fsync_AfterNBytes/N` | `fsync()` after writing N dirty bytes |
+| `BM_Fdatasync_AfterNBytes/N` | `fdatasync()` after writing N dirty bytes |
+
+### Section 6 — WAL Durability Path
+| Benchmark | Measures |
+|---|---|
+| `BM_Commit_Single` | One append + `commit()` (write + fsync) |
+| `BM_Commit_Many/N` | N appends + one `commit()` |
+| `BM_Destruct_Flush/N` | Destructor flush for N buffered records |
+
+### Section 7 — Transaction-Shaped Benchmarks
+| Benchmark | Measures |
+|---|---|
+| `BM_Txn_AppendOnly/N` | N fill transactions appended to ring buffer only (no fsync) |
+| `BM_Txn_FsyncPerTxn/N` | N fill transactions with `commit()` after each |
+| `BM_Txn_GroupCommit/N` | N fill transactions with one `commit()` at the end |
+
+### Section 8 — Group Commit Policy
+| Benchmark | Measures |
+|---|---|
+| `BM_GroupCommit/N` | N WAL records + one `commit()`; sweeps 1–1024 |
+
+### Section 9 — Recovery
+| Benchmark | Measures |
+|---|---|
+| `BM_Recover_Empty` | `recover()` on empty file |
+| `BM_Recover_Warm/N` | Warm-cache recovery of N records |
+| `BM_Recover_Coldish/N` | Cold-ish recovery with `POSIX_FADV_DONTNEED` hint |
+| `BM_Recover_Transactions/N` | Recovery of N realistic fill transactions |
+
+### Section 10 — Sequential Record Read
+| Benchmark | Measures |
+|---|---|
+| `BM_Read_Sequential/N` | `readNextWalRecord()` throughput, warm cache |
+| `BM_Read_Coldish/N` | Same with `POSIX_FADV_DONTNEED` hint before each iteration |
+
+### Section 11 — CRC Overhead (software CRC32, proxy for production cost)
+| Benchmark | Measures |
+|---|---|
+| `BM_CRC_Header` | CRC32 over 24-byte WalFrameHeader |
+| `BM_CRC_TxnLine` | CRC32 over 24-byte TxnLineRecord |
+| `BM_CRC_FillTransaction` | CRC32 over full 104-byte transaction payload |
+
+---
 
 ## Caveats
 
-- **fsync cost dominates flush benchmarks.** `BM_ConstructDestroy` and `BM_DestructFlush`
-  show ~1ms real time because `fsync()` blocks until the storage device confirms durability.
-  CPU time is much lower (~22µs–425µs). On NVMe the gap will be smaller; on HDD much larger.
-- **Filesystem matters.** Results on tmpfs or a RAM disk will show near-zero flush times.
-  These results were taken on a standard ext4 filesystem.
-- **CPU frequency scaling.** The benchmark runner emitted a warning that CPU scaling was
-  enabled, which adds noise to real-time measurements. CPU time figures are more reliable.
-- **v0 limits.** Only `FsyncMode::Always` is supported. `commit()` is a no-op; all flushing
-  happens in the destructor. Benchmarks reflect this single-flush-on-close model.
-- **Buffer overflow.** `BM_AppendSingle` uses a 1M-record capacity ring buffer. Records
-  appended beyond that capacity are silently dropped (current v0 behaviour).
+- **Bug A** (`commitRecordToFile` writes `sizeof(WalRecord)` bytes including vector internals)
+  is still present. `BM_Destruct_Flush` and `BM_Commit_*` are measuring the buggy write path.
+  After Bug A is fixed, these numbers will change.
+- **Bug B** (missing `break` in `recover()` switch) limits actual recovery to 1 record
+  regardless of file size. `BM_Recover_*` numbers reflect recovering exactly 1 record.
+  After Bug B is fixed, recover throughput numbers will change significantly.
+- **CRC is stubbed** (always 0 in production). `BM_CRC_*` benchmarks use a software
+  CRC32 to show what the cost *would be* once enabled.
+- **CPU frequency scaling** was enabled during the run below; real-time IO numbers are
+  more reliable than CPU-time numbers.
+- **`fdatasync` is ~2× faster than `fsync`** on this hardware for small writes. Consider
+  using `fdatasync` in production once the implementation is stable.
+- **`writev` is ~44% faster** than two separate `write()` calls for single-record writes.
+  This is the preferred write path for the final implementation.
+
+---
 
 ## Latest Results
 
-**Timestamp:** 2026-04-25T10:17:29+01:00  
-**OS:** Linux 6.17.0-22-generic, 16 × 5134 MHz  
+**Timestamp:** 2026-04-29T21:58:53+01:00  
+**OS:** Linux 6.17.0-22-generic, 16 × 5135 MHz  
 **CPU caches:** L1 32 KiB × 8, L2 1 MiB × 8, L3 16 MiB  
-**Compiler:** GCC 13.3.0  
-**Build type:** Release  
-**Command:**
-```bash
-./build_test/test/benchmark/ledgerflow_benchmarks
+**Build type:** Release (GCC)  
+**Filesystem:** ext4 (tmpfs for temp WAL files under /tmp)
+
+### Section 1 — Lifecycle
+```
+BM_Lifecycle_ConstructDestroy     5851 ns real   5759 ns CPU
 ```
 
+### Section 2 — Record Encoding (CPU time; no IO)
 ```
------------------------------------------------------------------------------
-Benchmark                                   Time             CPU   Iterations
------------------------------------------------------------------------------
-BM_ConstructDestroy/iterations:500    1007338 ns        22277 ns          500
-BM_AppendSingle/iterations:1048576       2.91 ns         2.91 ns  1048576  items_per_second=343.55M/s
-BM_AppendMany/1/iterations:200           2852 ns         2634 ns      200  bytes_per_second=17.4MiB/s   items_per_second=379.6k/s
-BM_AppendMany/4/iterations:200           2906 ns         2603 ns      200  bytes_per_second=70.4MiB/s   items_per_second=1.54M/s
-BM_AppendMany/16/iterations:200          2913 ns         2657 ns      200  bytes_per_second=275.7MiB/s  items_per_second=6.02M/s
-BM_AppendMany/64/iterations:200          2810 ns         2505 ns      200  bytes_per_second=1.14GiB/s   items_per_second=25.6M/s
-BM_AppendMany/256/iterations:200         2964 ns         2667 ns      200  bytes_per_second=4.29GiB/s   items_per_second=96.0M/s
-BM_AppendMany/512/iterations:200         3671 ns         3396 ns      200  bytes_per_second=6.74GiB/s   items_per_second=150.8M/s
-BM_DestructFlush/1/iterations:50     1044013 ns        58978 ns       50  bytes_per_second=795KiB/s    items_per_second=16.9k/s
-BM_DestructFlush/4/iterations:50     1039254 ns        60844 ns       50  bytes_per_second=3.01MiB/s   items_per_second=65.7k/s
-BM_DestructFlush/16/iterations:50    1080951 ns        87255 ns       50  bytes_per_second=8.39MiB/s   items_per_second=183.4k/s
-BM_DestructFlush/64/iterations:50    1161927 ns       167140 ns       50  bytes_per_second=17.5MiB/s   items_per_second=382.9k/s
-BM_DestructFlush/256/iterations:50   1426720 ns       424588 ns       50  bytes_per_second=27.6MiB/s   items_per_second=602.9k/s
+BM_Encode_TxnHeader               8.84 ns    113M items/s
+BM_Encode_TxnLine                 9.05 ns    110M items/s
+BM_Encode_CommitRecord            8.92 ns    112M items/s
+BM_Encode_FillTransaction        53.3  ns    18.8M txns/s   (6 records/txn)
 ```
 
-### Reading the numbers
+### Section 3 — Append to Memory (CPU time)
+```
+BM_Append_Single                 34.6  ns    28.9M items/s
+BM_Append_Many/1                 3333  ns     345k items/s
+BM_Append_Many/64                5480  ns    13.5M items/s
+BM_Append_Many/512              15158  ns    34.8M items/s
+```
 
-- **`BM_AppendSingle` at 2.91 ns** is the pure in-memory cost. No I/O is measured here.
-- **`BM_DestructFlush` real time ~1ms** regardless of N reflects the fixed cost of a single
-  `fsync()` call. CPU time scales with N (more `write()` calls), but wall time is fsync-bound.
-- **`BM_AppendMany` setup overhead** (~2.5–3.4µs) includes WAL construction and file open,
-  which explains why small N looks relatively expensive per-record.
+### Section 4 — Write Without fsync (real time)
+```
+BM_Write_SingleRecord_NoFsync    2316  ns    432k items/s    19.8 MiB/s
+BM_Write_Writev_SingleRecord     1293  ns    774k items/s    35.4 MiB/s   ← 44% faster via single syscall
+BM_Write_BatchRecords/1          7893  ns    127k items/s
+BM_Write_BatchRecords/256      637633  ns    401k items/s    18.4 MiB/s
+```
+
+### Section 5 — fsync / fdatasync (real time)
+```
+BM_Fsync_AfterNBytes/280      1317055 ns  (1.3ms — fsync on one transaction)
+BM_Fsync_AfterNBytes/4096     1093214 ns  (1.1ms)
+BM_Fsync_AfterNBytes/65536    1123572 ns  (1.1ms)
+BM_Fsync_AfterNBytes/1048576  1397371 ns  (1.4ms)
+
+BM_Fdatasync_AfterNBytes/280   606339 ns  (0.6ms — ~2× faster than fsync)
+BM_Fdatasync_AfterNBytes/4096  501577 ns  (0.5ms)
+BM_Fdatasync_AfterNBytes/65536 524004 ns  (0.5ms)
+BM_Fdatasync_AfterNBytes/1M    857575 ns  (0.9ms)
+```
+Key insight: `fdatasync` is consistently ~2× faster than `fsync` for small dirty sizes.
+
+### Section 6 — WAL Durability Path (real time)
+```
+BM_Commit_Single              1231299 ns    812 items/s
+BM_Commit_Many/1              1185975 ns    843 items/s
+BM_Commit_Many/64             1576992 ns     40k items/s   ← 50× more records, same fsync
+BM_Commit_Many/1024           4568556 ns    224k items/s
+BM_Destruct_Flush/256         2345460 ns    109k items/s
+```
+
+### Section 7 — Transaction-Shaped Benchmarks (real time)
+```
+BM_Txn_AppendOnly/1              3336 ns    357k txns/s   (no fsync, memory only)
+BM_Txn_AppendOnly/256           48574 ns   5.41M txns/s   (ring-buffer scales well)
+BM_Txn_FsyncPerTxn/1          1310183 ns    763 txns/s    (1 fsync per txn)
+BM_Txn_FsyncPerTxn/4          4616753 ns    866 txns/s
+BM_Txn_GroupCommit/1          1164684 ns    859 txns/s
+BM_Txn_GroupCommit/4          1284684 ns   3.1k txns/s    ← 3.6× vs per-txn fsync
+BM_Txn_GroupCommit/64         2545151 ns  25.1k txns/s    ← 33× vs per-txn fsync
+BM_Txn_GroupCommit/256        5362602 ns  47.7k txns/s
+BM_Txn_GroupCommit/1024      17445526 ns  58.7k txns/s
+```
+Key insight: group commit at 64 transactions gives **33× better throughput** than per-transaction fsync.
+
+### Section 8 — Group Commit Policy (real time)
+```
+BM_GroupCommit/1              1160925 ns    861 items/s
+BM_GroupCommit/64             1554448 ns   41.2k items/s
+BM_GroupCommit/1024           4011301 ns   255k items/s
+```
+
+### Section 9 — Recovery (real time)
+```
+BM_Recover_Empty                 2416 ns
+BM_Recover_Warm/1                3496 ns    286k items/s
+BM_Recover_Warm/64              78232 ns    818k items/s
+BM_Recover_Warm/1024          1215426 ns    843k items/s     20 MiB/s
+BM_Recover_Coldish/1            18706 ns     53k items/s   (posix_fadvise overhead ~15µs)
+BM_Recover_Coldish/64          102755 ns    623k items/s
+BM_Recover_Coldish/1024       1315316 ns    779k items/s
+BM_Recover_Transactions/1        9431 ns    106k txns/s
+BM_Recover_Transactions/1000  7276242 ns    137k txns/s    37 MiB/s
+BM_Recover_Transactions/100000 724519222 ns  138k txns/s   37 MiB/s  (Bug B: only 1 record recovered)
+```
+Note: `BM_Recover_Transactions` throughput is dominated by `prewriteRecords` cost and WAL
+open/lseek overhead. Bug B means `recover()` returns after reading 1 record; numbers will
+change significantly once Bug B is fixed.
+
+### Section 10 — Sequential Read (real time)
+```
+BM_Read_Sequential/1            2787 ns    359k items/s
+BM_Read_Sequential/64          73389 ns    872k items/s    20.8 MiB/s
+BM_Read_Sequential/4096      4694116 ns    873k items/s    20.8 MiB/s   ← bandwidth-limited
+BM_Read_Coldish/1              18499 ns     54k items/s   (cache-miss penalty ~16µs)
+BM_Read_Coldish/4096         4772230 ns    858k items/s    20.5 MiB/s   ← converges with warm at scale
+```
+Key insight: sequential read plateaus at ~21 MiB/s. Each `readNextWalRecord` call makes
+2 `read()` syscalls; moving to `read()` with a kernel buffer would raise this ceiling.
+Old benchmark showed ~15µs for N=1 due to `SetItemsProcessed` called inside the loop;
+that was a counter bug, not a performance problem.
+
+### Section 11 — CRC Overhead (software CRC32, CPU time)
+```
+BM_CRC_Header            154 ns   149 MiB/s
+BM_CRC_TxnLine           158 ns   145 MiB/s
+BM_CRC_FillTransaction   926 ns   140 MiB/s
+```
+CRC per transaction (926 ns) is **17× the encoding cost** (53 ns) and will dominate the
+CPU hot path once enabled. A table-based or hardware CRC32 (`_mm_crc32_u64`) would reduce
+this significantly (expected 5–20× improvement).
+
+---
+
+## Reading the Numbers
+
+| Question | Answer from benchmarks |
+|---|---|
+| How fast is record encoding? | ~9 ns/record, ~18M fill txns/sec (CPU only) |
+| How fast is ring-buffer append? | ~35 ns/record after paylaod alloc |
+| How fast is write without fsync? | ~2.3µs/record (2 syscalls); ~1.3µs with writev |
+| What does fsync cost? | ~1.1–1.4ms regardless of dirty data size |
+| What does fdatasync cost? | ~0.5–0.9ms — ~2× faster than fsync |
+| How much does batching help? | Group-commit 64 txns → 33× better than per-txn fsync |
+| How fast is warm recovery? | ~843k records/sec, ~20 MiB/s |
+| Is sequential read actually slow? | No — old benchmark had a counter bug. Real: ~873k records/sec |
+| What does CRC cost? | 926 ns/txn (software) — 17× encoding; use hardware CRC in production |

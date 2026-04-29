@@ -1,12 +1,10 @@
 #pragma once
 #include <string>
 #include <vector>
-#include <fstream>
+#include <fcntl.h>
 #include <unistd.h>
 
 #include "ledgerflow/wal/wal.hpp"
-
-using namespace ledgerflow;
 
 namespace ledgerflow::test {
 
@@ -25,13 +23,18 @@ struct TempFile {
     TempFile& operator=(const TempFile&) = delete;
 };
 
+// Reads WAL records from disk using the proper frame parser.
+// Stops at EoF or the first non-Ok status (e.g. Corrupted due to Bug A).
 inline std::vector<wal::WalRecord> readWalRecords(const std::string& path) {
-    std::ifstream f(path, std::ios::binary);
+    const int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd == -1) return {};
     std::vector<wal::WalRecord> out;
     wal::WalRecord rec{};
-    while (f.read(reinterpret_cast<char*>(&rec), sizeof(rec))) {
+    while (wal::readNextWalRecord(fd, &rec) == wal::ReadStatus::Ok) {
         out.push_back(rec);
+        rec = wal::WalRecord{};
     }
+    ::close(fd);
     return out;
 }
 
