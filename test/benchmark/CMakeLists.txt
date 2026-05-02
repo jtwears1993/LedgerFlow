@@ -10,6 +10,7 @@ set(BENCHMARK_ENABLE_GTEST_TESTS  OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(benchmark)
 
 add_executable(ledgerflow_benchmarks wal_benchmark.cpp
+        position_engine_benchmark.cpp
         ../../include/ledgerflow/protocol.hpp)
 
 target_link_libraries(ledgerflow_benchmarks

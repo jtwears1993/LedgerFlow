@@ -1,10 +1,14 @@
-# WAL Benchmarks
+# WAL and PositionEngine Benchmarks
 
 ## Purpose
 
-Measure the performance characteristics of `ledgerflow::wal::WriteAheadLog` across all
-cost centres: encoding, ring-buffer, write syscall, fsync/fdatasync, group commit,
-recovery, sequential read, and CRC.
+Measure the performance characteristics of `ledgerflow::wal::WriteAheadLog` and
+`ledgerflow::BasicPositionEngine`.
+
+WAL benchmarks cover encoding, ring-buffer, write syscall, fsync/fdatasync,
+group commit, recovery, sequential read, and CRC. PositionEngine benchmarks
+cover in-memory order updates, market-data marks, event dispatch, and linear
+position lookup costs.
 
 ---
 
@@ -28,6 +32,9 @@ cmake --build build_test --parallel
 
 # Single category (e.g. fsync)
 ./build_test/test/benchmark/ledgerflow_benchmarks --benchmark_filter=BM_Fsync
+
+# PositionEngine only
+./build_test/test/benchmark/ledgerflow_benchmarks --benchmark_filter=PositionEngine
 
 # JSON output for tooling
 ./build_test/test/benchmark/ledgerflow_benchmarks --benchmark_format=json
@@ -150,6 +157,18 @@ A **fill transaction** used in transaction benchmarks:
 | `BM_CRC_TxnLine` | CRC32 over 24-byte TxnLineRecord |
 | `BM_CRC_FillTransaction` | CRC32 over full 104-byte transaction payload |
 
+### Section 12 — PositionEngine Hot Path
+| Benchmark | Measures |
+|---|---|
+| `BM_PositionEngine_CreatePositionFromOrder` | Cold creation of a new position from an order event |
+| `BM_PositionEngine_UpdateExistingPositionFromOrder` | Steady-state same-symbol order update via direct handler |
+| `BM_PositionEngine_ApplyTopOfBookMarketData` | Steady-state top-of-book mark via direct handler |
+| `BM_PositionEngine_DispatchOrderEvent` | Same-symbol order update through `onEvent` |
+| `BM_PositionEngine_DispatchMarketDataEvent` | Top-of-book mark through `onEvent` |
+| `BM_PositionEngine_GetPositionHit/N` | Lookup hit with N positions; symbol at end of vector |
+| `BM_PositionEngine_GetPositionMiss/N` | Lookup miss with N positions |
+| `BM_PositionEngine_MixedDispatch90MarketData10Order` | Deterministic 90% market data / 10% order dispatch mix |
+
 ---
 
 ## Caveats
@@ -168,6 +187,11 @@ A **fill transaction** used in transaction benchmarks:
   using `fdatasync` in production once the implementation is stable.
 - **`writev` is ~44% faster** than two separate `write()` calls for single-record writes.
   This is the preferred write path for the final implementation.
+- **PositionEngine benchmarks include the current implementation behavior.** The current
+  implementation accumulates `total_unrealized_pnl` on repeated marks, so market-data
+  update benchmarks measure that extra store/add work as implemented today.
+- **PositionEngine lookup is linear over `std::vector<Position>`.** Hit benchmarks look up
+  the last symbol, so they intentionally represent worst-case successful lookup.
 
 ---
 
@@ -292,6 +316,49 @@ CRC per transaction (926 ns) is **17× the encoding cost** (53 ns) and will domi
 CPU hot path once enabled. A table-based or hardware CRC32 (`_mm_crc32_u64`) would reduce
 this significantly (expected 5–20× improvement).
 
+### Section 12 — PositionEngine Hot Path (CPU time)
+
+**Timestamp:** 2026-05-02T08:53:50+01:00  
+**Build type:** Release (GCC)  
+**Run command:** `./build_test/test/benchmark/ledgerflow_benchmarks --benchmark_filter=PositionEngine --benchmark_min_time=0.01s`
+
+```
+BM_PositionEngine_CreatePositionFromOrder              1320 ns      757k items/s
+BM_PositionEngine_UpdateExistingPositionFromOrder      44.5 ns     22.5M items/s
+BM_PositionEngine_ApplyTopOfBookMarketData             18.6 ns     53.7M items/s
+BM_PositionEngine_DispatchOrderEvent                   44.5 ns     22.5M items/s
+BM_PositionEngine_DispatchMarketDataEvent              18.2 ns     55.0M items/s
+
+BM_PositionEngine_GetPositionHit/1                     5.26 ns      190M items/s
+BM_PositionEngine_GetPositionHit/10                    56.8 ns     17.6M items/s
+BM_PositionEngine_GetPositionHit/100                    545 ns     1.84M items/s
+BM_PositionEngine_GetPositionHit/1000                  5025 ns      199k items/s
+BM_PositionEngine_GetPositionHit/10000                21743 ns     46.0k items/s
+
+BM_PositionEngine_GetPositionMiss/1                    1.03 ns      971M items/s
+BM_PositionEngine_GetPositionMiss/10                   2.95 ns      339M items/s
+BM_PositionEngine_GetPositionMiss/100                  21.7 ns     46.2M items/s
+BM_PositionEngine_GetPositionMiss/1000                  416 ns     2.41M items/s
+BM_PositionEngine_GetPositionMiss/10000               19796 ns     50.5k items/s
+
+BM_PositionEngine_MixedDispatch90MarketData10Order     10.8 ns     92.3M items/s
+```
+
+Interpretation:
+
+- New-position creation is much slower than steady-state updates because it constructs and
+  pushes a `Position` into the portfolio vector. This is the cold path and should be kept
+  separate from hot update latency.
+- Steady-state same-symbol order updates are ~45 ns both direct and through `onEvent`, so
+  dispatch overhead is lost in the current update cost for this path.
+- Top-of-book marking is ~18 ns both direct and through `onEvent`, indicating variant
+  dispatch is not the dominant cost for market-data updates in this benchmark shape.
+- Lookup cost scales linearly with portfolio size. Worst-case hit rises from ~5 ns at one
+  symbol to ~21.7 us at 10,000 symbols; misses show the same O(N) behavior.
+- The 90/10 mixed dispatch benchmark is faster than the simple weighted average because
+  it repeatedly touches one symbol and is dominated by the very short market-data route.
+  Use it as a dispatch sanity check, not as a substitute for portfolio-size sweeps.
+
 ---
 
 ## Reading the Numbers
@@ -307,3 +374,6 @@ this significantly (expected 5–20× improvement).
 | How fast is warm recovery? | ~843k records/sec, ~20 MiB/s |
 | Is sequential read actually slow? | No — old benchmark had a counter bug. Real: ~873k records/sec |
 | What does CRC cost? | 926 ns/txn (software) — 17× encoding; use hardware CRC in production |
+| How fast is steady-state position update? | ~45 ns for same-symbol order updates; ~18 ns for top-of-book marks |
+| What is `onEvent` dispatch overhead? | Not material in the current order/market-data microbenchmarks |
+| What is the PositionEngine lookup shape? | Linear scan; worst-case hit at 10k symbols is ~21.7µs |

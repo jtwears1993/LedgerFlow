@@ -4,8 +4,8 @@
 
 #pragma once
 
-#include <cstdint>
-#include <cstring>
+#include "ledgerflow/core/events.hpp"
+
 #include <string>
 #include <vector>
 
@@ -44,10 +44,11 @@ namespace ledgerflow {
     public:
         PositionEngine() = default;
         virtual ~PositionEngine() = default;
-        virtual bool onEvent();
-        virtual bool onMarketDataEvent();
-        virtual bool onPositionEvent();
-    };
+        virtual bool onEvent(const core::events::Event& event);
+        virtual bool onMarketDataEvent(const core::events::MarketDataEvent& event);
+        virtual void onOrderEvent(const core::events::OrderEvent& event);
 
-    PositionEngine& instance();
+        virtual Position* getPosition(const std::string& sym);
+        virtual Positions* getPositions();
+    };
 }

@@ -4,6 +4,7 @@
 
 #pragma once
 #include <cstdint>
+#include <stdexcept>
 
 namespace ledgerflow::core::enums {
 
@@ -12,20 +13,20 @@ namespace ledgerflow::core::enums {
         SELL
     };
 
+    inline Side sideFromSign(const std::int64_t signedQtyInt) {
+      if (signedQtyInt > 0) {
+          return Side::BUY;
+      }
+      if (signedQtyInt < 0) {
+          return Side::SELL;
+      }
+      throw std::invalid_argument("signedQtyInt cannot be zero");
+    }
+
     enum class ProductType : std::uint8_t {
         SPOT,
         FUTURES,
         OPTIONS
-    };
-
-    enum class EventType : std::uint8_t {
-        POSITION_OPEN_REQUEST,
-        ON_TRADE_OPEN,
-        ON_TRADE_PARTIAL_FILL,
-        ON_TRADE_FILL,
-        ON_TRADE_CANCEL,
-        ON_SETTLEMENT, // recon end of day settlement
-        FUND_ALLOCATION,
     };
 
    enum class PositionOpenResponseStatus : std::uint8_t {

@@ -8,7 +8,6 @@ file(GLOB_RECURSE LEDGERFLOW_SOURCES CONFIGURE_DEPENDS src/**/*.cpp)
 
 add_library(ledgerflow_lib STATIC ${LEDGERFLOW_SOURCES}
         include/ledgerflow/core/enums.hpp
-        include/ledgerflow/io/socket.hpp
         include/ledgerflow/protocol.hpp)
 target_include_directories(ledgerflow_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -16,10 +15,13 @@ add_executable(LedgerFlow app/main.cpp
         include/ledgerflow/core/ring_buffer.hpp
         src/ledgerflow/position_engine.cpp
         include/ledgerflow/core/enums.hpp
-        include/ledgerflow/io/socket.hpp
         include/ledgerflow/core/events.hpp
         include/ledgerflow/protocol.hpp
-        include/ledgerflow/server.hpp)
+        include/ledgerflow/server.hpp
+        include/ledgerflow/core/calculations.hpp
+        include/ledgerflow/io/uring_server.hpp
+        include/ledgerflow/io/uring_channel.hpp
+        include/ledgerflow/io/socket.hpp)
 target_link_libraries(LedgerFlow PRIVATE ledgerflow_lib)
 
 option(LEDGERFLOW_BUILD_TESTS "Build unit tests" OFF)

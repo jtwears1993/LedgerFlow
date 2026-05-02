@@ -4,4 +4,3 @@ Built on strong ledger-based principles, it provides a consistent, auditable vie
 across their full lifecycle—from execution through settlement and reconciliation.
 
 ## Design 
-[See DESIGN.md](./DESIGN.md)
