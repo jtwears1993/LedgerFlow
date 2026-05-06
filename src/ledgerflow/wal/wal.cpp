@@ -22,6 +22,12 @@ namespace ledgerflow::wal {
 
 
     void WriteAheadLog::commit() {
+        if (config_.fsync_mode.has_value() &&
+            config_.fsync_mode.value() == FsyncMode::Batch
+            && writeBuffer_.size() <  config_.max_batch_size.value()) {
+            return;
+        }
+
         if (std::vector<WalRecord> records; writeBuffer_.drain(records)) {
             for (auto& record : records) {
                 if (const auto res = commitRecordToFile(record); res != 0) {

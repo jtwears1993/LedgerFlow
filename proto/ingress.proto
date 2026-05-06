@@ -1,0 +1,124 @@
+syntax = "proto3";
+
+enum EventType {
+   EVENT_TYPE_UNSPECIFIED = 0;
+   EVENT_TYPE_MARKET_DATA = 1;
+   EVENT_TYPE_ORDER = 2;
+   EVENT_TYPE_EXECUTION = 3;
+}
+
+enum Side {
+   SIDE_UNSPECIFIED = 0;
+   SIDE_BUY = 1;
+   SIDE_SELL = 2;
+}
+
+enum MarketDataKind {
+   MARKET_DATA_KIND_UNSPECIFIED = 0;
+   MARKET_DATA_KIND_TRADE = 1;
+   MARKET_DATA_KIND_VWAP = 2;
+}
+
+enum OrderStatus {
+   ORDER_STATUS_UNSPECIFIED = 0;
+   ORDER_STATUS_ACCEPTED = 1;
+   ORDER_STATUS_CANCELED = 2;
+   ORDER_STATUS_EXPIRED = 3;
+   ORDER_STATUS_REJECTED = 4;
+}
+
+enum RequestType {
+   REQUEST_TYPE_UNSPECIFIED = 0;
+   REQUEST_TYPE_GET_POSITION = 1;
+   REQUEST_TYPE_GET_ALL_POSITIONS = 2;
+   REQUEST_TYPE_EXECUTION_EVENT = 3;
+   REQUEST_TYPE_TOP_OF_BOOK = 4;
+}
+
+message IngressRequest {
+   RequestType type = 1;
+   oneof request {
+      GetPositionRequest get_position_request = 2;
+      GetAllPositionsRequest get_all_positions_request = 3;
+      ExecutionEvent execution_event = 4;
+      TopOfBook top_of_book = 5;
+   }
+}
+
+message EventHeader {
+   uint64 ingest_ts_ns = 1;
+   uint32 schema_version = 2;
+   EventType type = 3;
+   uint32 reserved_value = 4;
+}
+
+message Trade {
+   string symbol = 1;
+   EventHeader hdr = 2;
+   Side side = 3;
+   int64 price = 4;
+   int64 quantity = 5;
+}
+
+message TopOfBook {
+   string symbol = 1;
+   EventHeader hdr = 2;
+   int64 best_bid_price = 3;
+   int64 best_ask_price = 4;
+}
+
+message Vwap {
+   string symbol = 1;
+   EventHeader hdr = 2;
+   int64 vwap = 3;
+}
+
+message ExecutionEvent {
+   string symbol = 1;
+   EventHeader hdr = 2;
+   uint64 order_id = 3;
+   Side side = 4;
+   OrderStatus status = 5;
+   uint32 reserved_value = 6;
+   int64 signed_order_qty = 7;
+   int64 limit_price = 8;
+   int64 avg_entry_price = 9;
+}
+
+message GetPositionRequest {
+   string symbol = 1;
+}
+
+message GetAllPositionsRequest {
+
+}
+
+message Position {
+   string sym = 1;
+   int64 quantity = 2;
+   int64 realized_pnl = 3;
+   int64 unrealized_pnl = 4;
+   int64 average_entry_price = 5;
+   int64 average_exit_price = 6;
+   int64 last_sequence_number = 7;
+}
+
+message PositionResponse {
+   Position position = 1;
+}
+
+message AllPositionsResponse {
+   repeated Position positions = 1;
+   int64 max_exposure = 2;
+   int64 current_exposure = 3;
+   int64 available_exposure_capacity = 4;
+   int64 total_realized_pnl = 5;
+   int64 total_unrealized_pnl = 6;
+}
+
+message IngressResponse {
+   oneof response {
+      PositionResponse position_response = 1;
+      AllPositionsResponse all_positions_response = 2;
+   }
+}

@@ -3,9 +3,12 @@
 //
 
 #pragma once
+#include <cerrno>
 #include <iostream>
 #include <optional>
 #include <ostream>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "sequencer.hpp"
 
@@ -52,7 +55,7 @@ namespace ledgerflow::wal {
 
     constexpr std::uint32_t WalMagicBoundaryByte = 0x4C57414C; // LWAL
     constexpr std::uint16_t WalVersion = 1;
-    constexpr std::size_t DefaultBatchSize = 10;
+    constexpr std::size_t DefaultBatchSize = 64;
     constexpr std::size_t DefaultBatchSizePeriodUS = 1000;
     constexpr std::size_t DefaultWalCapacity = 1000;
     constexpr std::string_view DefaultWalFilePath = "ledgerflow/wal.log";

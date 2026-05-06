@@ -4,8 +4,10 @@
 
 #pragma once
 
+#include "ledgerflow/core/enums.hpp"
 #include "ledgerflow/core/events.hpp"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -44,11 +46,29 @@ namespace ledgerflow {
     public:
         PositionEngine() = default;
         virtual ~PositionEngine() = default;
-        virtual bool onEvent(const core::events::Event& event);
-        virtual bool onMarketDataEvent(const core::events::MarketDataEvent& event);
-        virtual void onOrderEvent(const core::events::OrderEvent& event);
+        virtual bool onEvent(const core::events::Event& event) = 0;
+        virtual bool onMarketDataEvent(const core::events::MarketDataEvent& event) = 0;
+        virtual void onOrderEvent(const core::events::OrderEvent& event) = 0;
 
-        virtual Position* getPosition(const std::string& sym);
-        virtual Positions* getPositions();
+        virtual Position* getPosition(const std::string& sym) = 0;
+        virtual Positions* getPositions() = 0;
+    };
+
+    class BasicPositionEngine final : public PositionEngine {
+    public:
+        explicit BasicPositionEngine(core::enums::ProductType productType, std::int64_t minorUnits);
+        ~BasicPositionEngine() override = default;
+
+        bool onEvent(const core::events::Event& event) override;
+        bool onMarketDataEvent(const core::events::MarketDataEvent& event) override;
+        void onOrderEvent(const core::events::OrderEvent& event) override;
+
+        Position* getPosition(const std::string& sym) override;
+        Positions* getPositions() override;
+
+    private:
+        Positions positions = {};
+        core::enums::ProductType productType;
+        std::int64_t minorUnits;
     };
 }

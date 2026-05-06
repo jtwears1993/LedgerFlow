@@ -15,7 +15,7 @@ add_executable(ledgerflow_unit_tests
     wal_recover_test.cpp
     wal_io_test.cpp
     position_engine_test.cpp
-        ../../include/ledgerflow/protocol.hpp
+    event_mapper_test.cpp
 )
 
 target_link_libraries(ledgerflow_unit_tests

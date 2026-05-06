@@ -5,15 +5,7 @@
 #include <vector>
 
 #include "ledgerflow/core/calculations.hpp"
-#include "../../src/ledgerflow/position_engine.cpp"
-
-namespace ledgerflow {
-bool PositionEngine::onEvent(const core::events::Event&) { return false; }
-bool PositionEngine::onMarketDataEvent(const core::events::MarketDataEvent&) { return false; }
-void PositionEngine::onOrderEvent(const core::events::OrderEvent&) {}
-Position* PositionEngine::getPosition(const std::string&) { return nullptr; }
-Positions* PositionEngine::getPositions() { return nullptr; }
-} // namespace ledgerflow
+#include "ledgerflow/position_engine.hpp"
 
 using namespace ledgerflow;
 
