@@ -4,9 +4,10 @@
 #pragma once
 
 #include <liburing.h>
+#include <list>
+#include <netinet/in.h>
 #include <stop_token>
 #include <vector>
-#include <netinet/in.h>
 
 #include "ingress.pb.h"
 #include "position_engine.hpp"
@@ -14,7 +15,7 @@
 
 namespace ledgerflow {
 
-    constexpr int DEFAULT_PORT = 8080;
+    constexpr int DEFAULT_PORT = 4000;
     constexpr int DEFAULT_QUEUE_SIZE = 256;
     constexpr std::string DEFAULT_HOST = "127.0.0.1";
 
@@ -44,11 +45,13 @@ namespace ledgerflow {
         int fd;
         std::vector<char> read_buffer;
         std::vector<char> write_buffer;
+        iovec read_iov{};
+        iovec write_iov{};
         IoRingEvent read_event{};
         IoRingEvent write_event{};
     };
 
-    inline connection* find_connection(const int fd, std::vector<connection>& connections) {
+    inline connection* find_connection(const int fd, std::list<connection>& connections) {
         for (auto& conn : connections) {
             if (conn.fd == fd) {
                 return &conn;
@@ -69,7 +72,7 @@ namespace ledgerflow {
             PositionEngine& _engine;
             int _listen_fd;
             int _ring_fd;
-            std::vector<connection> _connection_fds;
+            std::list<connection> _connection_fds;
             io_uring _ring;
             IoRingEvent _accept_event{};
 

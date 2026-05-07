@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <chrono>
+#include <cerrno>
 #include <stdexcept>
 
 
@@ -39,15 +40,20 @@ namespace ledgerflow {
             return -1;
         }
         while (!stop_token.stop_requested()) {
-            const int ret = io_uring_wait_cqe(&_ring, &cqe);
-            const auto event = reinterpret_cast<IoRingEvent *>(cqe->user_data);
+            __kernel_timespec timeout{.tv_sec = 0, .tv_nsec = 100'000'000};
+            const int ret = io_uring_wait_cqe_timeout(&_ring, &cqe, &timeout);
             if ( ret < 0) {
+                if (ret == -ETIME) {
+                    continue;
+                }
                 perror("io_uring_wait_cqe");
                 continue;
             }
+            const auto event = reinterpret_cast<IoRingEvent *>(cqe->user_data);
             if (cqe->res < 0) {
                 fprintf(stderr, "Async request failed: %s for event: %d\n",
                         strerror(-cqe->res), (int)event->type);
+                io_uring_cqe_seen(&_ring, cqe);
                 continue;
             }
 
@@ -58,6 +64,11 @@ namespace ledgerflow {
                     submit_read(cqe->res);
                     break;
                 case IoRingEventType::READ:
+                    if (cqe->res == 0) {
+                        handleClose(event->fd);
+                        break;
+                    }
+                    event->conn->read_buffer.resize(static_cast<std::size_t>(cqe->res));
                     handleClientRequest(*event);
                     break;
                 case IoRingEventType::WRITE:
@@ -70,6 +81,7 @@ namespace ledgerflow {
             }
             io_uring_cqe_seen(&_ring, cqe);
         }
+        cleanup();
         return 0;
     }
 
@@ -143,9 +155,9 @@ namespace ledgerflow {
             return -1;
         }
         conn->read_buffer.resize(4096);
-        const iovec iov{.iov_base = conn->read_buffer.data(), .iov_len = conn->read_buffer.size()};
+        conn->read_iov = {.iov_base = conn->read_buffer.data(), .iov_len = conn->read_buffer.size()};
         conn->read_event = {.type = IoRingEventType::READ, .fd = client_fd, .conn = conn};
-        io_uring_prep_readv(sqe, client_fd, &iov, 1, 0);
+        io_uring_prep_readv(sqe, client_fd, &conn->read_iov, 1, 0);
         io_uring_sqe_set_data(sqe, &conn->read_event);
         io_uring_submit(&_ring);
         return 0;
@@ -163,9 +175,9 @@ namespace ledgerflow {
             perror("find_connection()");
             return -1;
         }
-        const iovec iov{.iov_base = conn->write_buffer.data(), .iov_len = conn->write_buffer.size()};
+        conn->write_iov = {.iov_base = conn->write_buffer.data(), .iov_len = conn->write_buffer.size()};
         conn->write_event = {.type = IoRingEventType::WRITE, .fd = event.fd, .conn = conn};
-        io_uring_prep_writev(sqe, event.fd, &iov, 1, 0);
+        io_uring_prep_writev(sqe, event.fd, &conn->write_iov, 1, 0);
         io_uring_sqe_set_data(sqe, &conn->write_event);
         io_uring_submit(&_ring);
         return 0;

@@ -48,3 +48,10 @@ build_*/
 cmake-build-*/
 .agents
 .codex
+
+# Python generated protobuf
+generated/proto/v1/python/
+__pycache__/
+*.pyc
+.venv
+wal.log

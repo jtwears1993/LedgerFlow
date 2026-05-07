@@ -58,7 +58,7 @@ namespace ledgerflow::wal {
     constexpr std::size_t DefaultBatchSize = 64;
     constexpr std::size_t DefaultBatchSizePeriodUS = 1000;
     constexpr std::size_t DefaultWalCapacity = 1000;
-    constexpr std::string_view DefaultWalFilePath = "ledgerflow/wal.log";
+    constexpr std::string_view DefaultWalFilePath = "wal.log";
     constexpr auto DefaultFsyncMode = FsyncMode::Always;
 
     #pragma pack(push, 1)
@@ -176,7 +176,7 @@ namespace ledgerflow::wal {
                 throw std::runtime_error("Failed to open wal file");
             }
 
-            if ((config_.fsync_mode.has_value()) && (config_.fsync_mode.value() != FsyncMode::Always)) {
+            if (config_.fsync_mode.has_value() && config_.fsync_mode.value() != FsyncMode::Always) {
                 throw std::runtime_error("Fsync mode is not supported. V0 supports FsyncMode::Always only.");
             }
         }
@@ -192,6 +192,7 @@ namespace ledgerflow::wal {
         void append(const std::vector<std::byte>& data, std::uint16_t event_type);
         void commit();
         void recover(std::vector<WalRecord>& out);
+        void flush();
 
     private:
         const WalConfig config_;

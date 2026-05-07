@@ -44,8 +44,8 @@ int main(const int argc, char *argv[]) {
 
      auto server = ledgerflow::Server(server_config, wal, pos_engine);
      std::stop_source stop_source;
-     shutdown_manager.add_shutdown_request([&server]() {
-          server.stop();
+     shutdown_manager.add_shutdown_request([&stop_source]() {
+          stop_source.request_stop();
      });
 
 

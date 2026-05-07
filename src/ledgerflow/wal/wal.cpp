@@ -69,6 +69,10 @@ namespace ledgerflow::wal {
         }
     }
 
+    void WriteAheadLog::flush() {
+
+    }
+
 
     int WriteAheadLog::openLogFile() {
         const auto path = config_.wal_file_path.value_or(std::string(DefaultWalFilePath));
